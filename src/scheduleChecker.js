@@ -1,6 +1,7 @@
 const axios = require('axios');
 const colors = require('colors');
-const { getRemainingTuesdays, getTimeRange } = require('./utils');
+const moment = require('moment');
+const { getRemainingTuesdays } = require('./utils');
 
 const SPACE_ID = process.env.SPACE_ID;
 const SPACE_KEY = process.env.SPACE_KEY;
@@ -23,7 +24,8 @@ const WEBHOOK_URL = `https://chat.googleapis.com/v1/spaces/${SPACE_ID}/messages?
 async function checkScheduleAndNotify() {
   try {
     const tuesdays = getRemainingTuesdays();
-    let fullMessage = '*[ ### SR32 Schedule Checker ### ]*\n\n';
+    const now = moment().format('dddd, DD-MMM-YYYY, [at] HH:mm:ss');
+    let fullMessage = `*[ ### SR32 Badminton Schedule Checker ### ]*\n\nLast Checked: ${now} WIB\n\n`;
 
     for (let i = 0; i < COURT_UIDS.length; i++) {
       const courtNumber = i + 1;
