@@ -22,6 +22,10 @@ const COURT_UIDS = [
 const WEBHOOK_URL = `https://chat.googleapis.com/v1/spaces/${SPACE_ID}/messages?key=${SPACE_KEY}&token=${SPACE_TOKEN}`;
 
 async function checkScheduleAndNotify() {
+  const RETRY_DELAY = 2000;
+  const TIMEOUT_DURATION = 30000;
+  const startTime = Date.now();
+
   try {
     const tuesdays = getNextFourTuesdays();
     const now = moment().format('dddd, DD-MMM-YYYY, [at] HH:mm:ss');
@@ -59,10 +63,26 @@ async function checkScheduleAndNotify() {
       fullMessage += courtMessage + '\n';
     }
 
-    await axios.post(WEBHOOK_URL, { text: fullMessage.trim() });
-    console.log(
-      colors.green('Notification sent for all checked dates and courts.')
-    );
+    let success = false;
+    while (!success && Date.now() - startTime < TIMEOUT_DURATION) {
+      try {
+        await axios.post(WEBHOOK_URL, { text: fullMessage.trim() });
+        console.log(
+          colors.green('Notification sent for all checked dates and courts.')
+        );
+        success = true;
+      } catch (error) {
+        console.error(colors.red('Error sending notification:'), error.message);
+        console.log(`Retrying in ${RETRY_DELAY / 1000} seconds...`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+      }
+    }
+
+    if (!success) {
+      console.error(
+        colors.red('Failed to send notification within the timeout duration.')
+      );
+    }
   } catch (error) {
     console.error(colors.red('Error checking schedule:'), error.message);
   }
