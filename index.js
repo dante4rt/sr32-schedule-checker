@@ -4,7 +4,7 @@ const colors = require('colors');
 const { checkScheduleAndNotify } = require('./src/scheduleChecker');
 
 const job = new cron.CronJob(
-  '0 0 * * *',
+  '* * * * *',
   checkScheduleAndNotify,
   null,
   true,

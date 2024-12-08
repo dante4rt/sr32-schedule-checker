@@ -21,11 +21,72 @@ const COURT_UIDS = [
 
 const WEBHOOK_URL = `https://chat.googleapis.com/v1/spaces/${SPACE_ID}/messages?key=${SPACE_KEY}&token=${SPACE_TOKEN}`;
 
-async function checkScheduleAndNotify() {
-  const RETRY_DELAY = 2000;
-  const TIMEOUT_DURATION = 30000;
-  const startTime = Date.now();
+async function retryOperation(operation, maxRetries = 5, baseDelay = 1000) {
+  let retries = 0;
+  while (retries < maxRetries) {
+    try {
+      return await operation();
+    } catch (error) {
+      retries++;
 
+      console.error(
+        colors.yellow(`Attempt ${retries} failed: ${error.message}`)
+      );
+
+      const delay = baseDelay * Math.pow(2, retries) + Math.random() * 1000;
+
+      if (
+        error.code === 'ECONNREFUSED' ||
+        error.message.includes('EAI_AGAIN') ||
+        error.message.includes('network') ||
+        error.message.includes('timeout')
+      ) {
+        console.log(
+          colors.yellow(
+            `Network issue detected. Retrying in ${delay / 1000} seconds...`
+          )
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  throw new Error(`Operation failed after ${maxRetries} attempts`);
+}
+
+async function fetchCourtSchedule(courtUid, tuesday) {
+  const date = formatIndonesianDate(tuesday);
+
+  return retryOperation(async () => {
+    console.log(`Checking for date: ${date} on Court ${courtUid}`);
+
+    const response = await axios.get(
+      `https://sports-sr32.com/api/lapangan/${courtUid}/jadwal?date=${date}`,
+      { timeout: 10000 }
+    );
+
+    return response.data.data.sessions;
+  });
+}
+
+async function sendNotificationWithRetry(message) {
+  return retryOperation(async () => {
+    await axios.post(
+      WEBHOOK_URL,
+      { text: message.trim() },
+      {
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(colors.green('Notification sent successfully.'));
+  });
+}
+
+async function checkScheduleAndNotify() {
   try {
     const tuesdays = getNextFourTuesdays();
     const now = moment().format('dddd, DD-MMM-YYYY, [at] HH:mm:ss');
@@ -36,55 +97,43 @@ async function checkScheduleAndNotify() {
       let courtMessage = `🏸 *Court ${courtNumber}* 🏸\n`;
 
       for (const tuesday of tuesdays) {
-        const date = formatIndonesianDate(tuesday);
-        console.log(`Checking for date: ${date} on Court ${courtNumber}`);
+        try {
+          const sessions = await fetchCourtSchedule(COURT_UIDS[i], tuesday);
+          const date = formatIndonesianDate(tuesday);
+          const targetTimes = ['07:00', '08:00', '09:00', '17:00', '18:00'];
 
-        const response = await axios.get(
-          `https://sports-sr32.com/api/lapangan/${COURT_UIDS[i]}/jadwal?date=${date}`
-        );
+          let availableSlots = targetTimes.filter((time) => {
+            const session = sessions.find((s) => s.startTime === time);
+            return session && session.isAvailable;
+          });
 
-        const { sessions } = response.data.data;
-        const targetTimes = ['07:00', '08:00', '09:00', '17:00', '18:00'];
-
-        let availableSlots = targetTimes.filter((time) => {
-          const session = sessions.find((s) => s.startTime === time);
-          return session && session.isAvailable;
-        });
-
-        if (availableSlots.length > 0) {
-          courtMessage += `📅 ${date}: 🟢 Available at ${availableSlots.join(
-            ', '
+          if (availableSlots.length > 0) {
+            courtMessage += `📅 ${date}: 🟢 Available at ${availableSlots.join(
+              ', '
+            )}\n`;
+          } else {
+            courtMessage += `📅 ${date}: 🔴 No available slots\n`;
+          }
+        } catch (error) {
+          console.error(
+            colors.red(`Error fetching schedule for Court ${courtNumber}:`),
+            error.message
+          );
+          courtMessage += `📅 Error checking schedule for ${formatIndonesianDate(
+            tuesday
           )}\n`;
-        } else {
-          courtMessage += `📅 ${date}: 🔴 No available slots\n`;
         }
       }
 
       fullMessage += courtMessage + '\n';
     }
 
-    let success = false;
-    while (!success && Date.now() - startTime < TIMEOUT_DURATION) {
-      try {
-        await axios.post(WEBHOOK_URL, { text: fullMessage.trim() });
-        console.log(
-          colors.green('Notification sent for all checked dates and courts.')
-        );
-        success = true;
-      } catch (error) {
-        console.error(colors.red('Error sending notification:'), error.message);
-        console.log(`Retrying in ${RETRY_DELAY / 1000} seconds...`);
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
-      }
-    }
-
-    if (!success) {
-      console.error(
-        colors.red('Failed to send notification within the timeout duration.')
-      );
-    }
+    await sendNotificationWithRetry(fullMessage);
   } catch (error) {
-    console.error(colors.red('Error checking schedule:'), error.message);
+    console.error(
+      colors.red('Comprehensive error in schedule checking:'),
+      error.message
+    );
   }
 }
 
